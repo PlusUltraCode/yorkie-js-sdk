@@ -528,4 +528,39 @@ export class CRDTText<A extends Indexable = Indexable> extends CRDTElement {
 
     return pairs;
   }
+
+  /**
+   * `canDeleteForTest` checks if nodes in the given range can be deleted.
+   * This is for testing purpose only.
+   */
+  public canDeleteForTest(
+    fromIdx: number,
+    toIdx: number,
+    editedAt: TimeTicket,
+    clientLamportAtChange: bigint,
+  ): boolean[] {
+    const range = this.indexRangeToPosRange(fromIdx, toIdx);
+    const results: boolean[] = [];
+    
+    // Use the same approach as edit method to find nodes
+    const [toLeft, , toRight] = this.rgaTreeSplit.findNodeWithSplit(
+      range[1],
+      editedAt,
+    );
+    const [fromLeft, , fromRight] = this.rgaTreeSplit.findNodeWithSplit(
+      range[0],
+      editedAt,
+    );
+    
+    // Find all nodes between fromRight and toRight
+    const nodes = this.rgaTreeSplit.findBetween(fromRight, toRight);
+    
+    for (const node of nodes) {
+      if (node && !node.isRemoved()) {
+        results.push(node.canDelete(editedAt, clientLamportAtChange));
+      }
+    }
+    
+    return results;
+  }
 }

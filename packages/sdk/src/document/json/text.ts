@@ -348,4 +348,24 @@ export class Text<A extends Indexable = Indexable> {
 
     return this.text.indexRangeToPosRange(fromIdx, toIdx);
   }
+
+  /**
+   * `canDeleteForTest` checks if nodes in the given range can be deleted.
+   * This is for testing purpose only.
+   */
+  canDeleteForTest(
+    fromIdx: number,
+    toIdx: number,
+    editedAt: TimeTicket,
+    clientLamportAtChange: bigint,
+  ): boolean[] {
+    if (!this.context || !this.text) {
+      throw new YorkieError(
+        Code.ErrNotInitialized,
+        'Text is not initialized yet',
+      );
+    }
+
+    return this.text.canDeleteForTest(fromIdx, toIdx, editedAt, clientLamportAtChange);
+  }
 }
