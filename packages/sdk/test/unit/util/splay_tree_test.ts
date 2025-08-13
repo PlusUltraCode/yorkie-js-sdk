@@ -156,3 +156,40 @@ describe('SplayTree', function () {
     assert.equal(tree.indexOf(nodeA), -1);
   });
 });
+
+describe('SplayTree traverse', () => {
+  it('should traverse nodes in inorder', () => {
+    // Create a simple tree
+    const tree = new SplayTree<string>();
+    
+    // Insert nodes with values
+    const node1 = tree.insert(StringNode.create('A'));
+    const node2 = tree.insert(StringNode.create('B'));
+    const node3 = tree.insert(StringNode.create('C'));
+    
+    // Collect nodes using traverse
+    const collectedNodes: SplayNode<string>[] = [];
+    tree.traverse((node) => {
+      collectedNodes.push(node);
+    });
+    
+    // Verify nodes were collected
+    assert.equal(collectedNodes.length, 3, 'Should collect all 3 nodes');
+    
+    // Verify the values are collected in order
+    const values = collectedNodes.map(node => node.getValue());
+    assert.deepEqual(values, ['A', 'B', 'C'], 'Should collect nodes in order');
+  });
+  
+  it('should handle empty tree traversal', () => {
+    const tree = new SplayTree<string>();
+    const collectedNodes: SplayNode<string>[] = [];
+    
+    // Should not throw error on empty tree
+    tree.traverse((node) => {
+      collectedNodes.push(node);
+    });
+    
+    assert.equal(collectedNodes.length, 0, 'Should collect no nodes from empty tree');
+  });
+});
