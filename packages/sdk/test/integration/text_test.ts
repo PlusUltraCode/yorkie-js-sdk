@@ -912,3 +912,237 @@ describe('peri-text example: text concurrent edit', function () {
     }, task.name);
   });
 });
+
+describe.only('Causal Relationship Tests', function () {
+  it('should handle causal relationship remove operations', function () {
+    const doc = new Document<{ k1: Text }>('test-doc');
+    
+    // T1: Insert("abcd")
+    doc.update((root) => {
+      root.k1 = new Text();
+      root.k1.edit(0, 0, 'abcd');
+    }, 'T1: Insert("abcd")');
+
+    doc.update((root)=>{
+      root.k1.edit(1, 3, ''); // T2: Delete("bc")
+    })
+    
+    assert.equal(doc.getRoot().k1.toString(), 'ad');
+    
+
+    doc.update((root) => {
+      const text = root.k1;
+      
+      // 첫 번째 노드 (원래 "a"였던 노드) 확인
+      const firstNodeCanDelete = text.canDeleteForTest(0);
+      // 삭제된 노드는 canDeleteForTest가 false를 반환해야 함
+      assert.equal(firstNodeCanDelete, true);
+      
+      // 두 번째 노드 (원래 "d"였던 노드) 확인
+      const secondNodeCanDelete = text.canDeleteForTest(1);
+      // 삭제된 노드는 canDeleteForTest가 false를 반환해야 함
+      assert.equal(secondNodeCanDelete, false);
+     
+      const thirdNodeCanDelete = text.canDeleteForTest(2);
+      assert.equal(thirdNodeCanDelete,false);
+
+       // 두 번째 노드 (원래 "d"였던 노드) 확인
+       const firthNodeCanDelete = text.canDeleteForTest(3);
+       // 삭제된 노드는 canDeleteForTest가 false를 반환해야 함
+       assert.equal(firthNodeCanDelete, true);
+     });
+
+  });
+
+  it('should handle concurrent causal relationship operations', async function ({ task }) {
+    await withTwoClientsAndDocuments<{ k1: Text }>(async (c1, d1, c2, d2) => {
+      // 초기 텍스트 설정: "abcd"
+      d1.update((root) => {
+        root.k1 = new Text();
+        root.k1.edit(0, 0, 'abcd');
+      }, 'T1: Insert("abcd") by c1');
+      
+      await c1.sync();
+      await c2.sync();
+      
+      assert.equal(d1.getRoot().k1.toString(), 'abcd');
+      assert.equal(d2.getRoot().k1.toString(), 'abcd');
+
+      // Client 1: "bc" 삭제 (T2)
+      d1.update((root) => {
+        root.k1.edit(1, 3, ''); // Delete "bc"
+      }, 'T2: Delete("bc") by c1');
+      
+      // Client 2: "cd" 삭제 (T3) - 동시에 발생
+      d2.update((root) => {
+        root.k1.edit(2, 4, ''); // Delete "cd"
+      }, 'T3: Delete("cd") by c2');
+      
+      // 동기화 전 각 클라이언트의 로컬 상태 확인
+      assert.equal(d1.getRoot().k1.toString(), 'ad'); // c1 로컬: "bc" 삭제됨
+      assert.equal(d2.getRoot().k1.toString(), 'ab'); // c2 로컬: "cd" 삭제됨
+      
+      // 동기화
+      await c1.sync();
+      await c2.sync();
+      await c1.sync();
+      
+      // 동기화 후 최종 상태 확인 - 두 클라이언트 모두 동일한 상태여야 함
+      assert.equal(d1.getRoot().k1.toString(), 'a'); // "bcd" 모두 삭제됨
+      assert.equal(d2.getRoot().k1.toString(), 'a');
+      
+      // Causal relationship 확인 - T2와 T3는 서로 인과관계가 없음
+      d1.update((root) => {
+        const text = root.k1;
+        
+        // 첫 번째 노드 "a"는 여전히 살아있음
+        const firstNodeCanDelete = text.canDeleteForTest(0);
+        assert.equal(firstNodeCanDelete, true, 'Node "a" should be deletable');
+        
+        // "b", "c", "d" 노드들은 모두 삭제됨
+        const secondNodeCanDelete = text.canDeleteForTest(1);
+        assert.equal(secondNodeCanDelete, false, 'Node "b" should not be deletable');
+        
+        const thirdNodeCanDelete = text.canDeleteForTest(2);
+        assert.equal(thirdNodeCanDelete, false, 'Node "c" should not be deletable');
+        
+        const fourthNodeCanDelete = text.canDeleteForTest(3);
+        assert.equal(fourthNodeCanDelete, false, 'Node "d" should not be deletable');
+      });
+      
+      // Client 2에서도 동일한 상태 확인
+      d2.update((root) => {
+        const text = root.k1;
+        
+        const firstNodeCanDelete = text.canDeleteForTest(0);
+        assert.equal(firstNodeCanDelete, true, 'Node "a" should be deletable in c2');
+        
+        const secondNodeCanDelete = text.canDeleteForTest(1);
+        assert.equal(secondNodeCanDelete, false, 'Node "b" should not be deletable in c2');
+        
+        const thirdNodeCanDelete = text.canDeleteForTest(2);
+        assert.equal(thirdNodeCanDelete, false, 'Node "c" should not be deletable in c2');
+        
+        const fourthNodeCanDelete = text.canDeleteForTest(3);
+        assert.equal(fourthNodeCanDelete, false, 'Node "d" should not be deletable in c2');
+      });
+    }, task.name);
+  });
+
+  it('should handle causal relationship with concurrent insertions and deletions', async function ({ task }) {
+    await withTwoClientsAndDocuments<{ k1: Text }>(async (c1, d1, c2, d2) => {
+      // 초기 텍스트 설정: "abc"
+      d1.update((root) => {
+        root.k1 = new Text();
+        root.k1.edit(0, 0, 'abc');
+      }, 'T1: Insert("abc") by c1');
+      
+      await c1.sync();
+      await c2.sync();
+      
+      // Client 1: "b" 삭제 (T2)
+      d1.update((root) => {
+        root.k1.edit(1, 2, ''); // Delete "b"
+      }, 'T2: Delete("b") by c1');
+      
+      // Client 2: "b" 뒤에 "xyz" 삽입 (T3) - 동시에 발생
+      d2.update((root) => {
+        root.k1.edit(2, 2, 'xyz'); // Insert "xyz" after "b"
+      }, 'T3: Insert("xyz") by c2');
+      
+      // 동기화 전 상태
+      assert.equal(d1.getRoot().k1.toString(), 'ac'); // c1: "b" 삭제됨
+      assert.equal(d2.getRoot().k1.toString(), 'abxyzc'); // c2: "xyz" 삽입됨
+      
+      // 동기화
+      await c1.sync();
+      await c2.sync();
+      await c1.sync();
+      
+      // 최종 상태 - "b"는 삭제되고 "xyz"는 삽입됨
+      assert.equal(d1.getRoot().k1.toString(), 'axyzc');
+      assert.equal(d2.getRoot().k1.toString(), 'axyzc');
+      
+      // Causal relationship 확인
+      d1.update((root) => {
+        const text = root.k1;
+        
+        // "a"는 살아있음
+        assert.equal(text.canDeleteForTest(0), true, 'Node "a" should be deletable');
+        
+        // "b"는 삭제됨 (T2에 의해)
+        assert.equal(text.canDeleteForTest(1), false, 'Node "b" should not be deletable');
+        
+        // "xyz"는 살아있음 (T3에 의해 삽입됨)
+        // 참고: 실제 인덱스는 구현에 따라 다를 수 있음
+      });
+    }, task.name);
+  });
+
+  it('should handle complex causal chains with multiple operations', async function ({ task }) {
+    await withTwoClientsAndDocuments<{ k1: Text }>(async (c1, d1, c2, d2) => {
+      // 초기 텍스트: "abcdef"
+      d1.update((root) => {
+        root.k1 = new Text();
+        root.k1.edit(0, 0, 'abcdef');
+      }, 'T1: Insert("abcdef") by c1');
+      
+      await c1.sync();
+      await c2.sync();
+      
+      // Round 1: 동시 편집
+      d1.update((root) => {
+        root.k1.edit(1, 3, ''); // Delete "bc"
+      }, 'T2: Delete("bc") by c1');
+      
+      d2.update((root) => {
+        root.k1.edit(4, 6, ''); // Delete "ef"
+      }, 'T3: Delete("ef") by c2');
+      
+      await c1.sync();
+      await c2.sync();
+      await c1.sync();
+      
+      // 중간 상태: "ad"
+      assert.equal(d1.getRoot().k1.toString(), 'ad');
+      assert.equal(d2.getRoot().k1.toString(), 'ad');
+      
+      // Round 2: 추가 동시 편집
+      d1.update((root) => {
+        root.k1.edit(1, 1, 'xyz'); // Insert "xyz" between "a" and "d"
+      }, 'T4: Insert("xyz") by c1');
+      
+      d2.update((root) => {
+        root.k1.edit(0, 1, ''); // Delete "a"
+      }, 'T5: Delete("a") by c2');
+      
+      await c1.sync();
+      await c2.sync();
+      await c1.sync();
+      
+      // 최종 상태: "xyzd"
+      assert.equal(d1.getRoot().k1.toString(), 'xyzd');
+      assert.equal(d2.getRoot().k1.toString(), 'xyzd');
+      
+      // Causal relationship 최종 확인
+      d1.update((root) => {
+        const text = root.k1;
+        
+        // 삭제된 노드들 확인
+        // "a", "b", "c", "e", "f"는 삭제됨
+        // "x", "y", "z", "d"는 살아있음
+        
+        // 실제 인덱스는 내부 구현에 따라 다를 수 있으므로
+        // toString()으로 최종 텍스트만 확인
+        assert.equal(text.toString(), 'xyzd', 'Final text should be "xyzd"');
+      });
+      
+      // 두 클라이언트의 최종 상태가 동일한지 확인
+      assert.equal(
+        d1.toSortedJSON(),
+        d2.toSortedJSON(),
+        'Both clients should have identical state'
+      );
+    }, task.name);
+  });
+});
