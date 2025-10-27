@@ -435,6 +435,29 @@ export class SplayTree<V> {
     return true;
   }
 
+  /**
+   * `traverse` traverses the tree in inorder and calls the callback function for each node.
+   * This is a public method for traversing the tree.
+   * 
+   * @param callback - The callback function to be called for each node
+   */
+  public traverse(callback: (node: SplayNode<V>) => void): void {
+    this.traverseInorderWithCallback(this.root, callback);
+  }
+
+  private traverseInorderWithCallback(
+    node: SplayNode<V> | undefined,
+    callback: (node: SplayNode<V>) => void,
+  ): void {
+    if (!node) {
+      return;
+    }
+
+    this.traverseInorderWithCallback(node.getLeft(), callback);
+    callback(node);
+    this.traverseInorderWithCallback(node.getRight(), callback);
+  }
+
   private getRightmost(): SplayNode<V> {
     let node = this.root!;
     while (node.hasRight()) {
