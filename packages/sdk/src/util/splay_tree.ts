@@ -435,6 +435,17 @@ export class SplayTree<V> {
     return true;
   }
 
+  /**
+   * `traverse` traverses the tree in order and calls the callback for each node.
+   */
+  public traverse(callback: (node: SplayNode<V>) => void): void {
+    const nodes: Array<SplayNode<V>> = [];
+    this.traverseInorder(this.root!, nodes);
+    for (const node of nodes) {
+      callback(node);
+    }
+  }
+
   private getRightmost(): SplayNode<V> {
     let node = this.root!;
     while (node.hasRight()) {
