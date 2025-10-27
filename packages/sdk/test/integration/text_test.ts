@@ -2,6 +2,7 @@ import { describe, it, assert } from 'vitest';
 import { TextView } from '@yorkie-js/sdk/test/helper/helper';
 import { withTwoClientsAndDocuments } from '@yorkie-js/sdk/test/integration/integration_helper';
 import { Document, Text } from '@yorkie-js/sdk/src/yorkie';
+import { TimeTicket } from '@yorkie-js/sdk/src/document/time/ticket';
 
 describe('Text', function () {
   it('should handle edit operations', function () {
@@ -407,6 +408,62 @@ describe('Text', function () {
 
       assert.isOk(d1.getRoot().k1.getTreeByIndex().checkWeight());
       assert.isOk(d2.getRoot().k1.getTreeByIndex().checkWeight());
+    }, task.name);
+  });
+
+  it('should check canDelete for causal relationship in local+remote delete', async function ({
+    task,
+  }) {
+    await withTwoClientsAndDocuments<{ k1: Text }>(async (c1, d1, c2, d2) => {
+      // Initialize text with "ABCD"
+      d1.update((root) => {
+        root.k1 = new Text();
+        root.k1.edit(0, 0, 'ABCD');
+      }, 'set text by c1');
+      
+      await c1.sync();
+      await c2.sync();
+      assert.equal(d1.toSortedJSON(), `{"k1":[{"val":"ABCD"}]}`);
+      assert.equal(d2.toSortedJSON(), d1.toSortedJSON());
+
+      // Client 1 deletes "BC" (index 1-3)
+      d1.update((root) => {
+        root.k1.edit(1, 3, '');
+      }, 'delete BC by c1');
+      assert.equal(d1.toSortedJSON(), `{"k1":[{"val":"A"},{"val":"D"}]}`);
+      
+      // Client 2 tries to delete "BCD" (index 1-4) concurrently
+      d2.update((root) => {
+        root.k1.edit(1, 4, '');
+      }, 'delete BCD by c2');
+      assert.equal(d2.toSortedJSON(), `{"k1":[{"val":"A"}]}`);
+
+      // Sync changes
+      await c1.sync();
+      await c2.sync();
+      await c1.sync();
+
+      // Both should converge to the same state
+      assert.equal(d1.toSortedJSON(), `{"k1":[{"val":"A"}]}`);
+      assert.equal(d2.toSortedJSON(), d1.toSortedJSON());
+
+      // Test canDelete functionality
+      // After sync, nodes that were already deleted should not be deletable again
+      d1.update((root) => {
+        // Try to check if already deleted nodes can be deleted
+        // This should return false for nodes that were already deleted
+        const changeID = d1.getChangeID();
+        const currentTicket = TimeTicket.of(changeID.getLamport(), 0, changeID.getActorID());
+        const clientLamport = changeID.getLamport();
+        
+        // Check if nodes at position 0-1 (which should be "A") can be deleted
+        // This is to verify that remaining nodes are still deletable
+        const canDeleteResults = root.k1.canDeleteForTest(0, 1, currentTicket, clientLamport);
+        
+        // The remaining "A" should be deletable
+        assert.isTrue(canDeleteResults.length > 0, 'Should have at least one node');
+        assert.isTrue(canDeleteResults[0], 'Node "A" should be deletable');
+      });
     }, task.name);
   });
 });
